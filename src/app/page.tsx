@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
+
 import MemoryCard from "@/components/MemoryCard";
 import ProjectCard from "@/components/ProjectCard";
 import BriefingCard from "@/components/BriefingCard";
