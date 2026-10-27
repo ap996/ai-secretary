@@ -1,69 +1,381 @@
-import Image from "next/image";
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+
+import MemoryCard from "@/components/MemoryCard";
+import ProjectCard from "@/components/ProjectCard";
+import BriefingCard from "@/components/BriefingCard";
+
+type Memory = {
+  id: number;
+  title: string | null;
+  content: string;
+  completed: boolean;
+  memory_type: string | null;
+  priority: number | null;
+  project: string | null;
+  due_date: string | null;
+};
 
 export default function Home() {
+  const [memory, setMemory] = useState("");
+  const [memories, setMemories] = useState<Memory[]>([]);
+  const [briefing, setBriefing] = useState(
+    "Generating briefing..."
+  );
+  const [selectedProject, setSelectedProject] =
+    useState<string | null>(null);
+
+  async function loadMemories() {
+    const { data, error } = await supabase
+      .from("memories")
+      .select("*");
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    const sorted = (data || []).sort((a, b) => {
+      if (a.completed !== b.completed) {
+        return a.completed ? 1 : -1;
+      }
+
+      return (
+        (b.priority ?? 50) -
+        (a.priority ?? 50)
+      );
+    });
+
+    setMemories(sorted);
+
+    generateBriefing(sorted);
+  }
+
+  async function generateBriefing(
+    memoryData: Memory[]
+  ) {
+    try {
+      const response = await fetch(
+        "/api/briefing",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            memories: memoryData,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      setBriefing(
+        data.briefing ||
+          "No briefing available."
+      );
+    } catch (error) {
+      console.error(error);
+
+      setBriefing(
+        "Unable to generate briefing."
+      );
+    }
+  }
+
+  useEffect(() => {
+    loadMemories();
+  }, []);
+
+  async function saveMemory() {
+    if (!memory.trim()) return;
+
+    const originalMemory = memory;
+
+    const { data, error } = await supabase
+      .from("memories")
+      .insert([
+        {
+          content: originalMemory,
+        },
+      ])
+      .select()
+      .single();
+
+    if (error) {
+      console.error(error);
+      return;
+    }
+
+    setMemory("");
+
+    try {
+      const response = await fetch(
+        "/api/analyze",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            content: originalMemory,
+          }),
+        }
+      );
+
+      const aiData =
+        await response.json();
+
+      const parsed = JSON.parse(
+        aiData.result
+      );
+
+      await supabase
+        .from("memories")
+        .update({
+          title: parsed.title,
+          memory_type:
+            parsed.memory_type,
+          priority:
+            parsed.priority,
+          project: parsed.project,
+          due_date:
+            parsed.due_date,
+        })
+        .eq("id", data.id);
+
+    } catch (error) {
+      console.error(error);
+    }
+
+    loadMemories();
+  }
+
+  async function toggleComplete(
+    id: number,
+    completed: boolean
+  ) {
+    await supabase
+      .from("memories")
+      .update({
+        completed: !completed,
+      })
+      .eq("id", id);
+
+    loadMemories();
+  }
+
+  const filtered = selectedProject
+    ? memories.filter(
+        (m) =>
+          m.project ===
+          selectedProject
+      )
+    : memories;
+
+  const activeTasks =
+    filtered.filter(
+      (m) =>
+        !m.completed &&
+        (m.memory_type ===
+          "task" ||
+          m.memory_type ===
+            "event" ||
+          !m.memory_type)
+    );
+
+  const notesAndIdeas =
+    filtered.filter(
+      (m) =>
+        !m.completed &&
+        (m.memory_type ===
+          "note" ||
+          m.memory_type ===
+            "idea")
+    );
+
+  const completedItems =
+    filtered.filter(
+      (m) => m.completed
+    );
+
+  const projectCounts =
+    memories.reduce(
+      (
+        acc: Record<
+          string,
+          number
+        >,
+        memory
+      ) => {
+        if (
+          memory.project &&
+          !memory.completed
+        ) {
+          acc[memory.project] =
+            (acc[memory.project] ||
+              0) + 1;
+        }
+
+        return acc;
+      },
+      {}
+    );
+
+    async function deleteMemory(
+  id: number
+) {
+  const { error } = await supabase
+    .from("memories")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    console.error(error);
+    return;
+  }
+
+  loadMemories();
+}
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <main className="min-h-screen bg-gray-100 p-8 text-black">
+      <div className="max-w-5xl mx-auto">
+
+        <BriefingCard
+          briefing={briefing}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
+
+        <div className="bg-white rounded-xl shadow p-6 mb-6">
+          <h1 className="text-3xl font-bold mb-4">
+            AI Secretary
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+
+          <textarea
+            className="w-full border rounded p-3"
+            rows={4}
+            placeholder="Type something..."
+            value={memory}
+            onChange={(e) =>
+              setMemory(
+                e.target.value
+              )
+            }
+          />
+
+          <button
+            onClick={saveMemory}
+            className="mt-4 bg-blue-600 text-white px-4 py-2 rounded"
           >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+            Save Memory
+          </button>
         </div>
-      </main>
-    </div>
+
+        <div className="bg-white rounded-xl shadow p-6 mb-6">
+          <h2 className="text-2xl font-bold mb-4">
+            📁 Projects
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {Object.entries(
+              projectCounts
+            ).map(
+              ([project, count]) => (
+                <button
+                  key={project}
+                  onClick={() =>
+                    setSelectedProject(
+                      project
+                    )
+                  }
+                  className="text-left"
+                >
+                  <ProjectCard
+                    project={project}
+                    count={count}
+                  />
+                </button>
+              )
+            )}
+          </div>
+
+          {selectedProject && (
+            <button
+              onClick={() =>
+                setSelectedProject(
+                  null
+                )
+              }
+              className="mt-4 text-blue-600"
+            >
+              Show All Projects
+            </button>
+          )}
+        </div>
+
+        <div className="bg-white rounded-xl shadow p-6">
+
+          <h2 className="text-2xl font-bold mb-4">
+            🔥 Active Tasks
+          </h2>
+
+          <ul className="space-y-3">
+            {activeTasks.map(
+              (memory) => (
+                <MemoryCard
+                key={memory.id}
+                memory={memory}
+                toggleComplete={toggleComplete}
+                deleteMemory={deleteMemory}
+              />
+
+              )
+            )}
+          </ul>
+
+          <h2 className="text-2xl font-bold mt-10 mb-4">
+            💡 Notes & Ideas
+          </h2>
+
+          <ul className="space-y-3">
+            {notesAndIdeas.map(
+              (memory) => (
+                <MemoryCard
+                key={memory.id}
+                memory={memory}
+                toggleComplete={toggleComplete}
+                deleteMemory={deleteMemory}
+              />
+
+              )
+            )}
+          </ul>
+
+          <h2 className="text-2xl font-bold mt-10 mb-4">
+            ✅ Completed
+          </h2>
+
+          <ul className="space-y-3">
+            {completedItems.map(
+              (memory) => (
+               <MemoryCard
+                key={memory.id}
+                memory={memory}
+                toggleComplete={toggleComplete}
+                deleteMemory={deleteMemory}
+              />
+
+              )
+            )}
+          </ul>
+
+        </div>
+
+      </div>
+    </main>
   );
 }
